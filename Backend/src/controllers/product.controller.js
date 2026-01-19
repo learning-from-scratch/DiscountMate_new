@@ -50,10 +50,11 @@ function normaliseColesProduct(product, latestPricing = null) {
 
   // Use current_price from product_pricings (latest pricing)
   // If no pricing exists, set to 0
-  const currentPrice =
-    (latestPricing && typeof latestPricing.current_price === 'number' && !isNaN(latestPricing.current_price))
-      ? latestPricing.current_price
-      : 0;
+   const currentPrice =
+      (latestPricing && typeof latestPricing.price === 'number' && !isNaN(latestPricing.price))
+         ? latestPricing.price
+         : 0;
+
 
   return {
     // Preserve Mongo _id so existing keyExtractor `_id` still works.
@@ -92,8 +93,141 @@ function normaliseColesProduct(product, latestPricing = null) {
   };
 }
 
-// Fetch products from DiscountMate_DB.products with latest pricing from product_pricings
 const getProducts = async (req, res) => {
+   try {
+      const coles = await getColesCollection();
+
+      const { search, category } = req.query || {};
+
+      const pageNumber = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const rawPageSize = parseInt(req.query.limit, 10) || parseInt(req.query.pageSize, 10) || 30;
+      const pageSizeNumber = Math.min(Math.max(rawPageSize, 1), 100);
+
+      const match = { product_code: { $exists: true, $ne: null } };
+
+      if (search && typeof search === "string" && search.trim()) {
+         const regex = new RegExp(search.trim(), "i");
+         match.$or = [
+            { product_name: regex },
+            { name: regex },
+            { item_name: regex },
+            { brand: regex },
+         ];
+      }
+
+      // category can be category_id OR category_name (we’ll support both)
+      if (category && typeof category === "string" && category.trim()) {
+         const c = category.trim();
+
+         // If it's an ObjectId, treat it as category_id
+         if (ObjectId.isValid(c)) {
+            match.category_id = new ObjectId(c);
+         } else {
+            // Otherwise treat it as category_name and join categories first (cheap, only 20 docs)
+            // We'll handle this by looking up the category and matching on category_name.
+            // (See pipeline below)
+         }
+      }
+
+      const wantsCategoryName = category && typeof category === "string" && category.trim() && !ObjectId.isValid(category.trim());
+      const categoryName = wantsCategoryName ? category.trim() : null;
+
+      const basePipeline = [
+         { $match: match },
+
+         // If category is a name, join categories and filter by category_name
+         ...(wantsCategoryName
+            ? [
+               {
+                  $lookup: {
+                     from: "categories",
+                     localField: "category_id",
+                     foreignField: "_id",
+                     as: "cat",
+                  },
+               },
+               { $unwind: { path: "$cat", preserveNullAndEmptyArrays: false } },
+               { $match: { "cat.category_name": new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } },
+            ]
+            : []),
+
+         // Compute sort key and sort BEFORE pagination
+         {
+            $addFields: {
+               sortName: {
+                  $toLower: {
+                     $ifNull: ["$product_name", { $ifNull: ["$name", { $ifNull: ["$item_name", ""] }] }],
+                  },
+               },
+            },
+         },
+         { $sort: { sortName: 1, _id: 1 } },
+
+         // Now paginate products (fast)
+         { $skip: (pageNumber - 1) * pageSizeNumber },
+         { $limit: pageSizeNumber },
+
+         // Now lookup latest pricing for only this page
+         {
+            $lookup: {
+               from: "product_pricings",
+               let: { code: "$product_code" },
+               pipeline: [
+                  { $match: { $expr: { $eq: ["$product_code", "$$code"] } } },
+                  { $sort: { date: -1, created_at: -1 } },
+                  { $limit: 1 },
+               ],
+               as: "latestPricingArr",
+            },
+         },
+         { $addFields: { latestPricing: { $arrayElemAt: ["$latestPricingArr", 0] } } },
+         { $project: { latestPricingArr: 0, sortName: 0 } },
+      ];
+
+      // Count total matches (without pricing lookup)
+      const countPipeline = [
+         { $match: match },
+         ...(wantsCategoryName
+            ? [
+               {
+                  $lookup: {
+                     from: "categories",
+                     localField: "category_id",
+                     foreignField: "_id",
+                     as: "cat",
+                  },
+               },
+               { $unwind: { path: "$cat", preserveNullAndEmptyArrays: false } },
+               { $match: { "cat.category_name": new RegExp(`^${categoryName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } },
+            ]
+            : []),
+         { $count: "total" },
+      ];
+
+      const [items, totalArr] = await Promise.all([
+         coles.aggregate(basePipeline).toArray(),
+         coles.aggregate(countPipeline).toArray(),
+      ]);
+
+      const total = totalArr?.[0]?.total || 0;
+      const totalPages = total === 0 ? 0 : Math.ceil(total / pageSizeNumber);
+
+      return res.json({
+         items,
+         page: pageNumber,
+         pageSize: pageSizeNumber,
+         total,
+         totalPages,
+      });
+   } catch (error) {
+      console.error("Error fetching products:", error);
+      return res.status(500).json({ message: "Failed to fetch products" });
+   }
+};
+
+
+// Fetch products from DiscountMate_DB.products with latest pricing from product_pricings
+const getProducts_backup = async (req, res) => {
   try {
     const coles = await getColesCollection();
     const pricings = await getProductPricingsCollection();
@@ -136,8 +270,8 @@ const getProducts = async (req, res) => {
       {
         $lookup: {
           from: 'product_pricings',
-          localField: '_id',
-          foreignField: 'product_id',
+          localField: 'product_code',
+          foreignField: 'product_code',
           as: 'pricings'
         }
       },
@@ -153,8 +287,8 @@ const getProducts = async (req, res) => {
       // Sort by collected_at (or created_datetime as fallback) descending to get latest first
       {
         $sort: {
-          'pricings.collected_at': -1,
-          'pricings.created_datetime': -1
+          'pricings.date': -1,
+          'pricings.created_at': -1
         }
       },
 
@@ -281,6 +415,22 @@ const getProducts = async (req, res) => {
   }
 };
 
+// Fetch raw products from DiscountMate_DB.products without joins
+const getRawProducts = async (req, res) => {
+  try {
+    const coles = await getColesCollection();
+    const products = await coles.find({}).toArray();
+
+    return res.json({
+      items: products,
+      total: products.length,
+    });
+  } catch (error) {
+    console.error('Error fetching raw products from DiscountMate_DB.products:', error);
+    return res.status(500).json({ message: 'Failed to fetch raw products' });
+  }
+};
+
 // Fetch a single product by various possible IDs from DiscountMate_DB.products with latest pricing
 const getProduct = async (req, res) => {
   try {
@@ -354,5 +504,5 @@ const getProduct = async (req, res) => {
   }
 };
 
-module.exports = { getProducts, getProduct };
+module.exports = { getProducts, getRawProducts, getProduct };
 
