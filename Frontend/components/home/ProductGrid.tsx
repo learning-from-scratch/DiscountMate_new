@@ -126,12 +126,14 @@ type ProductGridProps = {
    activeCategory?: string;
    searchQuery?: string;
    priceRangeFilter?: { min: number | null; max: number | null };
+   requireSearch?: boolean;
 };
 
 const ProductGrid: React.FC<ProductGridProps> = ({
    activeCategory,
    searchQuery,
    priceRangeFilter,
+   requireSearch = false,
 }) => {
    const [apiProducts, setApiProducts] = useState<ApiProduct[]>([]);
    const [loading, setLoading] = useState<boolean>(true);
@@ -143,6 +145,16 @@ const ProductGrid: React.FC<ProductGridProps> = ({
    const pageSize = 9; // cards per page
 
    useEffect(() => {
+      const hasSearch = typeof searchQuery === "string" && searchQuery.trim().length > 0;
+      if (requireSearch && !hasSearch) {
+         setApiProducts([]);
+         setTotalProducts(0);
+         setTotalPagesFromApi(0);
+         setError(null);
+         setLoading(false);
+         return;
+      }
+
       const fetchProducts = async (page: number, category?: string, search?: string) => {
          try {
             setLoading(true);

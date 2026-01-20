@@ -1,6 +1,10 @@
 const { ObjectId } = require('mongodb');
 const { getDb } = require("../config/database");
 
+function escapeRegex(input) {
+   return String(input).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function normaliseColesProduct(product, latestPricing = null) {
   if (!product) return null;
 
@@ -78,11 +82,9 @@ const getProducts = async (req, res) => {
       const match = { product_code: { $exists: true, $ne: null } };
 
       if (search && typeof search === "string" && search.trim()) {
-         const regex = new RegExp(search.trim(), "i");
+         const regex = new RegExp(escapeRegex(search.trim()), "i");
          match.$or = [
             { product_name: regex },
-            { name: regex },
-            { item_name: regex },
             { brand: regex },
          ];
       }
@@ -121,7 +123,11 @@ const getProducts = async (req, res) => {
                },
             },
             { $unwind: { path: "$cat", preserveNullAndEmptyArrays: false } },
-            { $match: { "cat.category_name": categoryNameRegex } },
+            {
+               $match: {
+                  "cat.category_name": categoryNameRegex,
+               },
+            },
          ]
          : [];
 

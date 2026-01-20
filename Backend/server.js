@@ -7,6 +7,7 @@ const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 // const { connectToMongoDB } = require('./src/config/database');
 const userRoutes = require('./src/routers/user.router');
 const productRoutes = require('./src/routers/product.router');
+const categoryRoutes = require('./src/routers/category.router');
 const blogRoutes = require('./src/routers/blog.router');
 const newsRoutes = require('./src/routers/news.router');
 const contactRoutes = require('./src/routers/contact.router');
@@ -107,6 +108,7 @@ async function startServer() {
 // Routes
 app.use('/api/users', userRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/categories', categoryRoutes);
 app.use('/api/baskets', basketRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/news', newsRoutes);
