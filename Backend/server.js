@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
-const { connectToMongoDB } = require('./src/config/database');
+// const { connectToMongoDB } = require('./src/config/database');
 const userRoutes = require('./src/routers/user.router');
 const productRoutes = require('./src/routers/product.router');
 const blogRoutes = require('./src/routers/blog.router');
@@ -83,20 +83,25 @@ async function ensureMongoUri() {
    }
 
    process.env.MONGO_URI = payload;
+
+   console.log("MONGO_URI loaded:", Boolean(process.env.MONGO_URI));
 }
 
 async function startServer() {
-    try {
-        await ensureMongoUri();
-        await connectToMongoDB();
-    } catch (err) {
-        console.error("Failed to initialize MongoDB:", err);
-        process.exit(1);
-    }
+   try {
+      await ensureMongoUri();
 
-    app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
-    });
+      // Require AFTER MONGO_URI is set
+      const { connectToMongoDB } = require('./src/config/database');
+      await connectToMongoDB();
+   } catch (err) {
+      console.error("Failed to initialize MongoDB:", err);
+      process.exit(1);
+   }
+
+   app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+   });
 }
 
 // Routes
