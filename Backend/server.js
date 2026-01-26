@@ -24,6 +24,13 @@ const setupSwagger = require('./src/config/swagger');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// App Engine / reverse proxy support:
+// express-rate-limit validates X-Forwarded-For usage and will throw if proxies are sending the header but Express isn't configured to trust them.
+if (process.env.NODE_ENV === 'production') {
+    // Trust the first proxy hop (works for App Engine / common ingress setups)
+    app.set('trust proxy', 1);
+}
+
 const uploadsDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
